@@ -7,6 +7,7 @@ const pool = new pg.Pool({
     ssl: DATABASE_URL && (DATABASE_URL.includes('supabase.co') || DATABASE_URL.includes('render.com'))
         ? { rejectUnauthorized: false }
         : false,
+    family: 4,
 })
 
 export function getDB() {
