@@ -1,23 +1,34 @@
 import pg from 'pg'
 import crypto from 'crypto'
+import dns from 'dns'
 import { DATABASE_URL } from './config.js'
 
-const pool = new pg.Pool({
-    connectionString: DATABASE_URL,
-    ssl: DATABASE_URL && (DATABASE_URL.includes('supabase.co') || DATABASE_URL.includes('render.com'))
-        ? { rejectUnauthorized: false }
-        : false,
-    family: 4,
-})
+let pool
 
 export function getDB() {
     return pool
+}
+
+async function createPool() {
+    const url = new URL(DATABASE_URL)
+    try {
+        const addresses = await dns.resolve4(url.hostname)
+        url.hostname = addresses[0]
+    } catch {}
+    return new pg.Pool({
+        connectionString: url.toString(),
+        ssl: DATABASE_URL.includes('supabase.co') || DATABASE_URL.includes('render.com')
+            ? { rejectUnauthorized: false }
+            : false,
+    })
 }
 
 export async function initDB() {
     if (!DATABASE_URL) {
         throw new Error('DATABASE_URL environment variable is required')
     }
+
+    pool = await createPool()
 
     await pool.query(`
         CREATE TABLE IF NOT EXISTS keys (
@@ -53,7 +64,6 @@ export async function initDB() {
         )
     `)
 
-    // Seed default admin if admins table is empty
     const adminCount = await pool.query('SELECT COUNT(*) as count FROM admins')
     if (parseInt(adminCount.rows[0].count) === 0) {
         const defaultUser = process.env.ADMIN_USER || 'admin'
@@ -66,7 +76,6 @@ export async function initDB() {
         )
     }
 
-    // Seed default detection config if not set
     const configCount = await pool.query("SELECT COUNT(*) as count FROM config WHERE key = 'detection'")
     if (parseInt(configCount.rows[0].count) === 0) {
         await pool.query(
@@ -75,7 +84,6 @@ export async function initDB() {
         )
     }
 
-    // Seed sample keys if keys table is empty
     const keyCount = await pool.query('SELECT COUNT(*) as count FROM keys')
     if (parseInt(keyCount.rows[0].count) === 0) {
         const inserts = []
