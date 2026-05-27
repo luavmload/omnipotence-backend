@@ -1,21 +1,19 @@
 import Fastify from 'fastify'
 import path from 'path'
 import fastifyStatic from '@fastify/static'
-import { ADMIN_BASE_PATH, VERIFY_SECRET } from './lib/config.js'
+import { ADMIN_BASE_PATH, VERIFY_SECRET, DATABASE_URL } from './lib/config.js'
 import { initDB } from './lib/db.js'
 import { loadAdmins } from './lib/auth.js'
 import { loadDetectionConfig, getDetectionConfig } from './lib/detection.js'
 import registerAdminRoutes from './routes/admin.js'
 import registerPublicRoutes from './routes/public.js'
 
-const fastify = Fastify({
-  logger: {
-    transport: {
-      target: 'pino-pretty',
-      options: { translateTime: 'HH:MM:ss Z', ignore: 'pid,hostname' }
-    }
-  }
-});
+if (!DATABASE_URL) {
+    console.error('DATABASE_URL environment variable is required')
+    process.exit(1)
+}
+
+const fastify = Fastify({ logger: true })
 
 fastify.setNotFoundHandler(async (request, reply) => {
     const config = getDetectionConfig()
@@ -24,7 +22,6 @@ fastify.setNotFoundHandler(async (request, reply) => {
 
 await initDB()
 await loadAdmins()
-await loadDetectionConfig()
 
 await fastify.register(fastifyStatic, {
     root: path.join(process.cwd(), 'public', 'admin'),
@@ -41,6 +38,7 @@ await registerPublicRoutes(fastify)
 
 try {
     await fastify.listen({ port: 1337, host: '0.0.0.0' })
+    fastify.log.info(`verify secret: ${VERIFY_SECRET}`)
 } catch (err) {
     fastify.log.error(err)
     process.exit(1)

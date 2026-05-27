@@ -83,13 +83,20 @@ export default async function registerAdminRoutes(fastify) {
         const { username, password, displayName } = request.body || {}
         if (!username || !password) return reply.code(400).send({ ok: false, error: 'username and password required' })
         if (findAdmin(username)) return reply.code(409).send({ ok: false, error: 'User exists' })
+        const db = getDB()
         const salt = crypto.randomBytes(16).toString('hex')
         const hash = crypto.scryptSync(password, salt, 64).toString('hex')
-        const obj = { username, salt, hash, displayName: displayName || username, createdAt: new Date().toISOString() }
-        getAdmins().push(obj)
-        const ok = await saveAdmins()
-        if (!ok) return reply.code(500).send({ ok: false, error: 'Failed to save' })
-        return { ok: true, admin: { username: obj.username, displayName: obj.displayName } }
+        try {
+            await db.query(
+                'INSERT INTO admins (username, salt, hash, display_name) VALUES ($1, $2, $3, $4)',
+                [username, salt, hash, displayName || username]
+            )
+        } catch (e) {
+            if (e.code === '23505') return reply.code(409).send({ ok: false, error: 'User exists' })
+            return reply.code(500).send({ ok: false, error: 'Failed to save' })
+        }
+        await saveAdmins()
+        return { ok: true, admin: { username, displayName: displayName || username } }
     })
 
     fastify.put(`${ADMIN_API_PREFIX}/admins/:username`, async (request, reply) => {
@@ -98,10 +105,11 @@ export default async function registerAdminRoutes(fastify) {
         const { password, displayName, username: newUsername } = request.body || {}
         const a = findAdmin(target)
         if (!a) return reply.code(404).send({ ok: false, error: 'Not found' })
+        const db = getDB()
         if (newUsername !== undefined && newUsername !== target) {
             if (!newUsername.trim()) return reply.code(400).send({ ok: false, error: 'Username cannot be empty' })
             if (findAdmin(newUsername)) return reply.code(409).send({ ok: false, error: 'Username taken' })
-            a.username = newUsername.trim()
+            await db.query('UPDATE admins SET username = $1 WHERE username = $2', [newUsername.trim(), target])
             if (request.adminUser === target) {
                 for (const [token, session] of sessions) {
                     if (session.user === target) {
@@ -110,15 +118,15 @@ export default async function registerAdminRoutes(fastify) {
                 }
             }
         }
-        if (displayName !== undefined) a.displayName = displayName
+        if (displayName !== undefined) {
+            await db.query('UPDATE admins SET display_name = $1 WHERE username = $2', [displayName, newUsername || target])
+        }
         if (password) {
             const salt = crypto.randomBytes(16).toString('hex')
             const hash = crypto.scryptSync(password, salt, 64).toString('hex')
-            a.salt = salt
-            a.hash = hash
+            await db.query('UPDATE admins SET salt = $1, hash = $2 WHERE username = $3', [salt, hash, newUsername || target])
         }
-        const ok = await saveAdmins()
-        if (!ok) return reply.code(500).send({ ok: false, error: 'Failed to save' })
+        await saveAdmins()
         return { ok: true }
     })
 
@@ -126,83 +134,94 @@ export default async function registerAdminRoutes(fastify) {
         if (!requireAdmin(request, reply) || !apiLimiter(request, reply)) return
         const target = request.params.username
         const admins = getAdmins()
-        const idx = admins.findIndex(a => a.username === target)
-        if (idx === -1) return reply.code(404).send({ ok: false, error: 'Not found' })
         if (admins.length <= 1) return reply.code(400).send({ ok: false, error: 'Cannot delete last admin' })
-        admins.splice(idx, 1)
-        const ok = await saveAdmins()
-        if (!ok) return reply.code(500).send({ ok: false, error: 'Failed to save' })
+        const db = getDB()
+        await db.query('DELETE FROM admins WHERE username = $1', [target])
+        await saveAdmins()
         return { ok: true }
     })
 
     // Detection config
     fastify.get(`${ADMIN_API_PREFIX}/detection`, async (request, reply) => {
         if (!requireAdmin(request, reply) || !apiLimiter(request, reply)) return
-        return { ok: true, ...getDetectionConfig() }
+        const config = await getDetectionConfig()
+        return { ok: true, ...config }
     })
 
     fastify.put(`${ADMIN_API_PREFIX}/detection`, async (request, reply) => {
         if (!requireAdmin(request, reply) || !apiLimiter(request, reply)) return
         const { status, version } = request.body || {}
+        const updates = {}
         if (status !== undefined) {
             if (!['detected', 'undetected'].includes(status)) return reply.code(400).send({ ok: false, error: 'Status must be detected or undetected' })
-            updateDetectionConfig({ status })
+            updates.status = status
         }
-        if (version !== undefined) updateDetectionConfig({ version: String(version) })
-        const ok = await saveDetectionConfig()
+        if (version !== undefined) updates.version = String(version)
+        const merged = await updateDetectionConfig(updates)
+        const ok = await saveDetectionConfig(merged)
         if (!ok) return reply.code(500).send({ ok: false, error: 'Failed to save' })
-        return { ok: true, ...getDetectionConfig() }
+        return { ok: true, ...merged }
     })
 
     // Key CRUD
     fastify.get(`${ADMIN_API_PREFIX}/keys`, async (request, reply) => {
         if (!requireAdmin(request, reply) || !apiLimiter(request, reply)) return
-        const db = await getDB()
+        const db = getDB()
         const page = Math.max(1, parseInt(request.query.page) || 1)
         const perPage = Math.min(200, Math.max(10, parseInt(request.query.perPage) || 25))
         const search = request.query.search || ''
+        const offset = (page - 1) * perPage
+        const searchParam = search ? `%${search}%` : ''
 
-        const where = search ? `WHERE key LIKE '%' || ? || '%'` : ''
-        const totalRow = await db.get(`SELECT COUNT(*) as count FROM keys ${where}`, ...(search ? [search] : []))
-        const rows = await db.all(`SELECT key, used, banned, ban_reason, hwid, ip, uses_count, created_by, created_at, last_verified FROM keys ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`, ...(search ? [search, perPage, (page - 1) * perPage] : [perPage, (page - 1) * perPage]))
+        const totalResult = await db.query(
+            "SELECT COUNT(*) as count FROM keys WHERE $1 = '' OR key ILIKE $1",
+            [searchParam]
+        )
+        const total = parseInt(totalResult.rows[0].count)
 
-        return { ok: true, total: totalRow.count, page, perPage, keys: rows }
+        const rowsResult = await db.query(
+            'SELECT key, used, banned, ban_reason, hwid, ip, uses_count, created_by, created_at, last_verified FROM keys WHERE $1 = \'\' OR key ILIKE $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3',
+            [searchParam, perPage, offset]
+        )
+
+        return { ok: true, total, page, perPage, keys: rowsResult.rows }
     })
 
     fastify.get(`${ADMIN_API_PREFIX}/key/:key`, async (request, reply) => {
         if (!requireAdmin(request, reply) || !apiLimiter(request, reply)) return
-        const db = await getDB()
-        const entry = await db.get('SELECT * FROM keys WHERE key = ?', request.params.key)
-        if (!entry) return reply.code(404).send({ ok: false, error: 'Not found' })
-        return { ok: true, key: entry }
+        const db = getDB()
+        const result = await db.query('SELECT * FROM keys WHERE key = $1', [request.params.key])
+        if (result.rows.length === 0) return reply.code(404).send({ ok: false, error: 'Not found' })
+        return { ok: true, key: result.rows[0] }
     })
 
     fastify.post(`${ADMIN_API_PREFIX}/generate`, async (request, reply) => {
         if (!requireAdmin(request, reply) || !apiLimiter(request, reply)) return
         const { count = 1, prefix = 'OMNIPOTENCE' } = request.body || {}
-        const db = await getDB()
-        const inserts = []
-        await db.exec('BEGIN')
+        const db = getDB()
+        const client = await db.connect()
         try {
+            await client.query('BEGIN')
             for (let i = 0; i < Math.min(1000, count); i++) {
                 const key = `${prefix}-${crypto.randomBytes(4).toString('hex').toUpperCase()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`
-                inserts.push(db.run('INSERT INTO keys (key, created_by) VALUES (?, ?)', key, request.adminUser || 'admin'))
+                await client.query('INSERT INTO keys (key, created_by) VALUES ($1, $2)', [key, request.adminUser || 'admin'])
             }
-            await Promise.all(inserts)
-            await db.exec('COMMIT')
+            await client.query('COMMIT')
         } catch (e) {
-            await db.exec('ROLLBACK')
+            await client.query('ROLLBACK')
             throw e
+        } finally {
+            client.release()
         }
-        return { ok: true, created: inserts.length }
+        return { ok: true, created: Math.min(1000, count) }
     })
 
     fastify.post(`${ADMIN_API_PREFIX}/ban`, async (request, reply) => {
         if (!requireAdmin(request, reply) || !apiLimiter(request, reply)) return
         const { key, reason = '' } = request.body || {}
         if (!key) return reply.code(400).send({ ok: false, error: 'Missing key' })
-        const db = await getDB()
-        await db.run('UPDATE keys SET banned = 1, ban_reason = ? WHERE key = ?', reason, key)
+        const db = getDB()
+        await db.query('UPDATE keys SET banned = 1, ban_reason = $1 WHERE key = $2', [reason, key])
         return { ok: true }
     })
 
@@ -210,8 +229,8 @@ export default async function registerAdminRoutes(fastify) {
         if (!requireAdmin(request, reply) || !apiLimiter(request, reply)) return
         const { key } = request.body || {}
         if (!key) return reply.code(400).send({ ok: false, error: 'Missing key' })
-        const db = await getDB()
-        await db.run('UPDATE keys SET banned = 0, ban_reason = NULL WHERE key = ?', key)
+        const db = getDB()
+        await db.query('UPDATE keys SET banned = 0, ban_reason = NULL WHERE key = $1', [key])
         return { ok: true }
     })
 
@@ -219,15 +238,15 @@ export default async function registerAdminRoutes(fastify) {
         if (!requireAdmin(request, reply) || !apiLimiter(request, reply)) return
         const { key } = request.body || {}
         if (!key) return reply.code(400).send({ ok: false, error: 'Missing key' })
-        const db = await getDB()
-        await db.run('UPDATE keys SET used = 0, hwid = NULL, ip = NULL WHERE key = ?', key)
+        const db = getDB()
+        await db.query('UPDATE keys SET used = 0, hwid = NULL, ip = NULL WHERE key = $1', [key])
         return { ok: true }
     })
 
     fastify.delete(`${ADMIN_API_PREFIX}/key/:key`, async (request, reply) => {
         if (!requireAdmin(request, reply) || !apiLimiter(request, reply)) return
-        const db = await getDB()
-        await db.run('DELETE FROM keys WHERE key = ?', request.params.key)
+        const db = getDB()
+        await db.query('DELETE FROM keys WHERE key = $1', [request.params.key])
         return { ok: true }
     })
 }

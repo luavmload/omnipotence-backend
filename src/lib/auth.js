@@ -1,7 +1,6 @@
 import crypto from 'crypto'
-import fs from 'fs/promises'
-import path from 'path'
-import { ADMINS_FILE, SESSION_TTL_MS, ANTI_TAMPER_TTL_MS } from './config.js'
+import { SESSION_TTL_MS, ANTI_TAMPER_TTL_MS } from './config.js'
+import { getDB } from './db.js'
 
 export const sessions = new Map()
 export const antiTamperTokens = new Map()
@@ -12,22 +11,17 @@ let admins = []
 
 export async function loadAdmins() {
     try {
-        const raw = await fs.readFile(ADMINS_FILE, 'utf8')
-        const list = JSON.parse(raw)
-        if (Array.isArray(list) && list.length > 0 && (list[0].salt === 'REPLACE_ME' || list[0].hash === 'REPLACE_ME')) {
-            throw new Error('placeholder')
-        }
-        admins = list
+        const db = getDB()
+        const result = await db.query('SELECT username, salt, hash, display_name, created_at FROM admins ORDER BY created_at ASC')
+        admins = result.rows.map(r => ({
+            username: r.username,
+            salt: r.salt,
+            hash: r.hash,
+            displayName: r.display_name,
+            createdAt: r.created_at,
+        }))
     } catch (e) {
-        const defaultUser = process.env.ADMIN_USER || 'admin'
-        const defaultPass = 'changeme123'
-        const salt = crypto.randomBytes(16).toString('hex')
-        const hash = crypto.scryptSync(defaultPass, salt, 64).toString('hex')
-        admins = [{ username: defaultUser, salt, hash, displayName: 'Administrator' }]
-        try {
-            await fs.mkdir(path.join(process.cwd(), 'data'), { recursive: true })
-            await fs.writeFile(ADMINS_FILE, JSON.stringify(admins, null, 2))
-        } catch (e) {}
+        admins = []
     }
 }
 
@@ -48,7 +42,16 @@ export function verifyAdminCredentials(username, password) {
 
 export async function saveAdmins() {
     try {
-        await fs.writeFile(ADMINS_FILE, JSON.stringify(admins, null, 2))
+        const db = getDB()
+        // Re-sync from DB
+        const result = await db.query('SELECT username, salt, hash, display_name, created_at FROM admins ORDER BY created_at ASC')
+        admins = result.rows.map(r => ({
+            username: r.username,
+            salt: r.salt,
+            hash: r.hash,
+            displayName: r.display_name,
+            createdAt: r.created_at,
+        }))
         return true
     } catch (e) {
         return false

@@ -35,8 +35,10 @@ export default async function registerPublicRoutes(fastify) {
             }
         }
 
-        const db = await getDB()
-        const entry = await db.get('SELECT * FROM keys WHERE key = ?', key)
+        const db = getDB()
+        const result = await db.query('SELECT * FROM keys WHERE key = $1', [key])
+        const entry = result.rows[0]
+
         if (!entry) {
             const res = { valid: false, error: 'Invalid key', timestamp }
             if (nonce) { res.nonce = nonce; res.proof = computeProof(nonce, timestamp, false) }
@@ -48,8 +50,8 @@ export default async function registerPublicRoutes(fastify) {
             return reply.code(403).send(res)
         }
 
-        if (entry.used === 0) {
-            await db.run('UPDATE keys SET used = 1, hwid = ?, ip = ?, last_verified = CURRENT_TIMESTAMP, uses_count = uses_count + 1 WHERE key = ?', hwid, ip, key)
+        if (!entry.used) {
+            await db.query('UPDATE keys SET used = 1, hwid = $1, ip = $2, last_verified = CURRENT_TIMESTAMP, uses_count = uses_count + 1 WHERE key = $3', [hwid, ip, key])
             const res = { valid: true, message: 'Key activated', timestamp }
             if (nonce) { res.nonce = nonce; res.proof = computeProof(nonce, timestamp, true) }
             reply.header('x-proof', res.proof)
@@ -57,7 +59,7 @@ export default async function registerPublicRoutes(fastify) {
         }
 
         if (entry.hwid === hwid && entry.ip === ip) {
-            await db.run('UPDATE keys SET last_verified = CURRENT_TIMESTAMP, uses_count = uses_count + 1 WHERE key = ?', key)
+            await db.query('UPDATE keys SET last_verified = CURRENT_TIMESTAMP, uses_count = uses_count + 1 WHERE key = $1', [key])
             const res = { valid: true, message: 'Key verified', timestamp }
             if (nonce) { res.nonce = nonce; res.proof = computeProof(nonce, timestamp, true) }
             reply.header('x-proof', res.proof)

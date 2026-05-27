@@ -1,31 +1,28 @@
-import fs from 'fs/promises'
-import path from 'path'
-import { DETECTION_FILE } from './config.js'
+import { getDB } from './db.js'
 
-const OLD_DETECTION_FILE = path.join(path.dirname(DETECTION_FILE), 'detection.json')
-
-let detectionConfig = { status: 'undetected', version: '1.0' }
+let cachedConfig = null
 
 export async function loadDetectionConfig() {
     try {
-        const raw = await fs.readFile(DETECTION_FILE, 'utf8')
-        detectionConfig = { ...detectionConfig, ...JSON.parse(raw) }
-    } catch (e) {
-        // migrate from old filename
-        try {
-            const raw = await fs.readFile(OLD_DETECTION_FILE, 'utf8')
-            detectionConfig = { ...detectionConfig, ...JSON.parse(raw) }
-            await saveDetectionConfig()
-            try { await fs.unlink(OLD_DETECTION_FILE) } catch (e) {}
-        } catch (e2) {
-            await saveDetectionConfig()
+        const db = getDB()
+        const result = await db.query("SELECT value FROM config WHERE key = 'detection'")
+        if (result.rows.length > 0) {
+            cachedConfig = result.rows[0].value
+            return cachedConfig
         }
-    }
+    } catch (e) {}
+    cachedConfig = { status: 'undetected', version: '1.0' }
+    return cachedConfig
 }
 
-export async function saveDetectionConfig() {
+export async function saveDetectionConfig(config) {
     try {
-        await fs.writeFile(DETECTION_FILE, JSON.stringify(detectionConfig, null, 2))
+        const db = getDB()
+        await db.query(
+            "INSERT INTO config (key, value) VALUES ('detection', $1) ON CONFLICT (key) DO UPDATE SET value = $1",
+            [JSON.stringify(config)]
+        )
+        cachedConfig = config
         return true
     } catch (e) {
         return false
@@ -33,9 +30,12 @@ export async function saveDetectionConfig() {
 }
 
 export function getDetectionConfig() {
-    return detectionConfig
+    return cachedConfig || { status: 'undetected', version: '1.0' }
 }
 
-export function updateDetectionConfig(updates) {
-    detectionConfig = { ...detectionConfig, ...updates }
+export async function updateDetectionConfig(updates) {
+    const current = getDetectionConfig()
+    const merged = { ...current, ...updates }
+    cachedConfig = merged
+    return merged
 }
