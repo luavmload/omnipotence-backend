@@ -1,0 +1,140 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Omnipotence Admin</title>
+  <link rel="stylesheet" href="style.css" />
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <div class="page-shell">
+    <div class="container">
+      <div class="brand">
+        <div class="logo">O</div>
+        <div>
+          <h1>Omnipotence Admin</h1>
+          <p class="subtitle">Secure dashboard access</p>
+        </div>
+      </div>
+
+      <div id="loginPage" class="card">
+        <p class="info">Enter your username and password to unlock the admin area.</p>
+        <label class="field">
+          <span>Username</span>
+          <input id="username" type="text" autocomplete="username" />
+        </label>
+        <label class="field">
+          <span>Password</span>
+          <input id="password" type="password" autocomplete="current-password" />
+        </label>
+        <button id="login" class="primary">Login</button>
+        <div id="loginError" class="error"></div>
+      </div>
+
+    <div id="dashboard" class="hidden">
+      <div class="dashboard-header card">
+        <div>
+          <div class="label">Admin dashboard</div>
+          <div id="statusMessage" class="status">Waiting for actions...</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <div id="currentUser" class="status" style="margin-right:8px"></div>
+          <button id="manageAdmins" class="secondary">Manage Users</button>
+          <button id="logout" class="ghost">Logout</button>
+        </div>
+      </div>
+
+      <section id="keysControls" class="controls card">
+        <div class="control-group">
+          <label class="field small">
+            <span>Generate count</span>
+            <input id="genCount" type="number" value="10" />
+          </label>
+          <label class="field small">
+            <span>Prefix</span>
+            <input id="genPrefix" type="text" value="OMNIPOTENCE" />
+          </label>
+          <button id="generate" class="primary">Generate</button>
+        </div>
+        <div class="control-group">
+          <label class="field full">
+            <span>Search keys</span>
+            <input id="search" placeholder="Search by key" />
+          </label>
+          <button id="searchBtn" class="secondary">Search</button>
+        </div>
+      </section>
+
+      <section id="detectionPanel" class="card">
+        <h3>Detection Status</h3>
+        <div style="display:flex;gap:16px;align-items:end;flex-wrap:wrap">
+          <label class="field small" style="margin-bottom:0">
+            <span>Status</span>
+            <select id="detectionStatus">
+              <option value="undetected">Undetected</option>
+              <option value="detected">Detected</option>
+            </select>
+          </label>
+          <label class="field small" style="margin-bottom:0">
+            <span>Version</span>
+            <input id="detectionVersion" type="text" />
+          </label>
+          <button id="saveDetection" class="primary">Save</button>
+        </div>
+      </section>
+
+      <section id="adminsPanel" class="card hidden">
+        <h3>Admins</h3>
+        <div class="table-wrap">
+          <table id="adminsTable">
+            <thead><tr><th>Username</th><th>Display Name</th><th>Actions</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div style="margin-top:12px">
+          <h4>Create Admin</h4>
+          <button id="createAdmin" class="primary">Create admin</button>
+        </div>
+      </section>
+
+      <section id="keysPanel" class="card table-card">
+        <div class="table-wrap">
+          <table id="keysTable">
+            <thead><tr><th>Key</th><th>Used</th><th>Banned</th><th>HWID</th><th>IP</th><th>Uses</th><th>Last Verified</th><th>Actions</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="pagination">
+          <button id="prev" class="ghost">Prev</button>
+          <span id="pageInfo"></span>
+          <button id="next" class="ghost">Next</button>
+        </div>
+      </section>
+    </div>
+  </div>
+  <div id="confirmModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-title">Confirm action</div>
+      <div id="confirmText" class="modal-text"></div>
+      <div class="modal-actions">
+        <button id="confirmDeny" class="ghost">Cancel</button>
+        <button id="confirmAccept" class="primary">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="inputModal" class="modal hidden">
+    <div class="modal-card">
+      <div id="inputTitle" class="modal-title">Input</div>
+      <div id="inputFields" class="modal-text">
+        <!-- dynamic fields inserted here -->
+      </div>
+      <div class="modal-actions">
+        <button id="inputCancel" class="ghost">Cancel</button>
+        <button id="inputAccept" class="primary">Save</button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
