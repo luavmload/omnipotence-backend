@@ -13,7 +13,7 @@ if (!DATABASE_URL) {
     process.exit(1)
 }
 
-const fastify = Fastify({ logger: true })
+const fastify = Fastify({ logger: true, trustProxy: true })
 
 fastify.setNotFoundHandler(async (request, reply) => {
     const config = getDetectionConfig()
